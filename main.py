@@ -487,7 +487,7 @@ def create_decoded_latents():
 			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
 			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
 
-	return pipe, decoded_latents, timesteps, init_trajectory
+	return g, pipe, decoded_latents, timesteps, init_trajectory
 
 # def run_latents():
 # 	plt.figure(figsize=(20,8))
@@ -552,7 +552,7 @@ def backward_process():
 				plt.imsave('backward_process.png', show_lat(pipe, latents))
 
 def backward_process_increase():
-	pipe, decoded_latents, timesteps, init_trajectory = create_decoded_latents()
+	g, pipe, decoded_latents, timesteps, init_trajectory = create_decoded_latents()
 
 	# we would need to flip trajectory values for pivoting in right direction
 	init_trajectory = init_trajectory.cpu().flip(0)
