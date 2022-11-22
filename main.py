@@ -2,6 +2,7 @@
 # this implementation works on diffusers >= 0.8.0
 from diffusers import StableDiffusionPipeline
 from torch import autocast, inference_mode
+from torch.optim import AdamW
 import numpy as np
 import torch
 
@@ -223,7 +224,7 @@ class DDIMScheduler(SchedulerMixin, ConfigMixin):
 		'''
 		if self.num_inference_steps is None:
 			raise ValueError(
-				'Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler'
+				'Number of inference steps is "None", you need to run "set_timesteps" after creating the scheduler'
 			)
 
 		# See formulas (12) and (16) of DDIM paper https://arxiv.org/pdf/2010.02502.pdf
@@ -313,7 +314,7 @@ class DDIMScheduler(SchedulerMixin, ConfigMixin):
 		'''
 		if self.num_inference_steps is None:
 			raise ValueError(
-				'Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler'
+				'Number of inference steps is "None", you need to run "set_timesteps" after creating the scheduler'
 			)
 
 		# See formulas (12) and (16) of DDIM paper https://arxiv.org/pdf/2010.02502.pdf
@@ -397,15 +398,15 @@ class DDIMScheduler(SchedulerMixin, ConfigMixin):
 	def __len__(self):
 		return self.config.num_train_timesteps
 
-device = 'cuda'
-# don't forget to add your token or comment if already logged in
-pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
-											   scheduler=DDIMScheduler(beta_end=0.012,
-																	   beta_schedule='scaled_linear',
-																	   beta_start=0.00085),
-											   use_auth_token=auth_token).to(device)
+# device = 'cuda'
+# # don't forget to add your token or comment if already logged in
+# pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
+# 											   scheduler=DDIMScheduler(beta_end=0.012,
+# 																	   beta_schedule='scaled_linear',
+# 																	   beta_start=0.00085),
+# 											   use_auth_token=auth_token).to(device)
 
-def show_lat(latents):
+def show_lat(pipe, latents):
 	# utility function for visualization of diffusion process
 	with torch.no_grad():
 		images = pipe.decode_latents(latents)
@@ -428,130 +429,186 @@ def im2latent(pipe, im, generator):
 	
 	return init_latents * 0.18215
 
-batch_size = 1
-# photo from ffhq
-init_image = Image.open('00001.jpg').resize((512,512))
-# fix seed
-g = torch.Generator(device=pipe.device).manual_seed(84)
+def run_decoded_latents():
+	device = 'cuda'
+	# don't forget to add your token or comment if already logged in
+	pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
+											   scheduler=DDIMScheduler(beta_end=0.012,
+																	   beta_schedule='scaled_linear',
+																	   beta_start=0.00085),
+											   use_auth_token=auth_token).to(device)
 
-image_latents = im2latent(pipe, init_image, g)
-pipe.scheduler.set_timesteps(51)
-# use text describing an image
-source_prompt = 'a photo of a woman'
-context = pipe._encode_prompt(source_prompt, pipe.device, 1, False, '')
+	batch_size = 1
+	# photo from ffhq
+	init_image = Image.open('00001.jpg').resize((512,512))
+	# fix seed
+	g = torch.Generator(device=pipe.device).manual_seed(84)
 
-plt.figure(figsize=(20,8))
-decoded_latents = image_latents.clone()
-with autocast('cuda'), inference_mode():
-	# we are pivoting timesteps as we are moving in opposite direction
-	timesteps = pipe.scheduler.timesteps.flip(0)
-	# this would be our targets for pivoting
-	init_trajectory = torch.empty(len(timesteps), *decoded_latents.size()[1:], device=decoded_latents.device, dtype=decoded_latents.dtype)
-	for i, t in enumerate(tqdm(timesteps)):
-		init_trajectory[i:i+1] = decoded_latents
-		noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
-		decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
-		if i % 10 == 0:
-			plt.subplot(1,6,i//10+1)
-			plt.imshow(show_lat(decoded_latents))
+	image_latents = im2latent(pipe, init_image, g)
+	pipe.scheduler.set_timesteps(51)
+	# use text describing an image
+	source_prompt = 'a photo of a woman'
+	context = pipe._encode_prompt(source_prompt, pipe.device, 1, False, '')
 
-plt.figure(figsize=(20,8))
-latents = decoded_latents.clone()
-with autocast('cuda'), inference_mode():
-	for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
-		latents = pipe.scheduler.step(
-			pipe.unet(latents, t, encoder_hidden_states=context).sample, t, latents
-		).prev_sample
-		if i % 10 == 0:
-			plt.subplot(1,6,i//10+1)
-			plt.imshow(show_lat(latents))
+	plt.figure(figsize=(20,8))
+	decoded_latents = image_latents.clone()
+	with autocast('cuda'), inference_mode():
+		# we are pivoting timesteps as we are moving in opposite direction
+		timesteps = pipe.scheduler.timesteps.flip(0)
+		# this would be our targets for pivoting
+		init_trajectory = torch.empty(len(timesteps), *decoded_latents.size()[1:], device=decoded_latents.device, dtype=decoded_latents.dtype)
+		for i, t in enumerate(tqdm(timesteps)):
+			init_trajectory[i:i+1] = decoded_latents
+			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
+			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
+			if i % 10 == 0:
+				plt.subplot(1,6,i//10+1)
+				# plt.imshow(show_lat(decoded_latents))
+				plt.imsave('decoded_latents.png', show_lat(pipe, decoded_latents))
 
-# we would need to flip trajectory values for pivoting in right direction
-init_trajectory = init_trajectory.cpu().flip(0)
-_ = pipe.vae.requires_grad_(False)
-_ = pipe.text_encoder.requires_grad_(False)
-_ = pipe.unet.requires_grad_(False)
 
-from torch.optim import AdamW
+def create_decoded_latents():
+	device = 'cuda'
+	# don't forget to add your token or comment if already logged in
+	pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
+											   scheduler=DDIMScheduler(beta_end=0.012,
+																	   beta_schedule='scaled_linear',
+																	   beta_start=0.00085),
+											   use_auth_token=auth_token).to(device)
 
-latents = decoded_latents.clone()
+	batch_size = 1
+	# photo from ffhq
+	init_image = Image.open('00001.jpg').resize((512,512))
+	# fix seed
+	g = torch.Generator(device=pipe.device).manual_seed(84)
 
-# I've noticed that scale < 1 works better
-scale = 0.6
+	image_latents = im2latent(pipe, init_image, g)
+	pipe.scheduler.set_timesteps(51)
+	# use text describing an image
+	source_prompt = 'a photo of a woman'
+	context = pipe._encode_prompt(source_prompt, pipe.device, 1, False, '')
 
-context_uncond = pipe._encode_prompt('', pipe.device, 1, False, '')
-# we will be optimizing uncond text embedding
-context_uncond.requires_grad_(True)
-
-# use same text
-prompt = 'a photo of a woman'
-context_cond = pipe._encode_prompt(prompt, pipe.device, 1, False, '')
-
-# default lr works
-opt = AdamW([context_uncond])
-
-# concat latents for classifier-free guidance
-latents = torch.cat([latents, latents])
-latents.requires_grad_(True)
-context = torch.cat((context_uncond, context_cond))
-
-plt.figure(figsize=(20,8))
-with autocast(device):
-	for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
-		latents = pipe.scheduler.scale_model_input(latents, t)
-		uncond, cond = pipe.unet(latents, t, encoder_hidden_states=context).sample.chunk(2)
-		with torch.enable_grad():
-			latents = pipe.scheduler.step(uncond + scale * (cond - uncond), t, latents, generator=g).prev_sample
+	plt.figure(figsize=(20,8))
+	decoded_latents = image_latents.clone()
+	with autocast('cuda'), inference_mode():
+		# we are pivoting timesteps as we are moving in opposite direction
+		timesteps = pipe.scheduler.timesteps.flip(0)
+		# this would be our targets for pivoting
+		init_trajectory = torch.empty(len(timesteps), *decoded_latents.size()[1:], device=decoded_latents.device, dtype=decoded_latents.dtype)
+		for i, t in enumerate(tqdm(timesteps)):
+			init_trajectory[i:i+1] = decoded_latents
+			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
+			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
 		
-		opt.zero_grad()
-		# optimize uncond text emb
-		pivot_value = init_trajectory[[i]].to(pipe.device)
-		(latents - pivot_value).mean().backward()
-		opt.step()
-		latents = latents.detach()
-		
-		if i % 10 == 0:
-			plt.subplot(1,6,i//10+1)
-			plt.imshow(show_lat(latents))
+	return decoded_latents, timesteps, init_trajectory
 
-from torch.optim import AdamW
+def run_latents():
+	plt.figure(figsize=(20,8))
+	latents = decoded_latents.clone()
+	with autocast('cuda'), inference_mode():
+		for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
+			latents = pipe.scheduler.step(
+				pipe.unet(latents, t, encoder_hidden_states=context).sample, t, latents
+			).prev_sample
+			if i % 10 == 0:
+				plt.subplot(1,6,i//10+1)
+				# plt.imshow(show_lat(latents))
+				lt.imsave('latents.png', show_lat(pipe, latents))
 
-latents = decoded_latents.clone()
+def backward_process():
+	decoded_latents, timesteps, init_trajectory = create_decoded_latents()
 
-# for image editing purposes scale from 1 to 2 works good
-scale = 1.5
+	# we would need to flip trajectory values for pivoting in right direction
+	init_trajectory = init_trajectory.cpu().flip(0)
+	_ = pipe.vae.requires_grad_(False)
+	_ = pipe.text_encoder.requires_grad_(False)
+	_ = pipe.unet.requires_grad_(False)
 
-context_uncond = pipe._encode_prompt('', pipe.device, 1, False, '')
-# we will be optimizing uncond text embedding
-context_uncond.requires_grad_(True)
+	latents = decoded_latents.clone()
 
-# use same text
-prompt = 'a photo of an angry woman'
-context_cond = pipe._encode_prompt(prompt, pipe.device, 1, False, '')
+	# I've noticed that scale < 1 works better
+	scale = 0.6
 
-# default lr works
-opt = AdamW([context_uncond])
+	context_uncond = pipe._encode_prompt('', pipe.device, 1, False, '')
+	# we will be optimizing uncond text embedding
+	context_uncond.requires_grad_(True)
 
-# concat latents for classifier-free guidance
-latents = torch.cat([latents, latents])
-latents.requires_grad_(True)
-context = torch.cat((context_uncond, context_cond))
+	# use same text
+	prompt = 'a photo of a woman'
+	context_cond = pipe._encode_prompt(prompt, pipe.device, 1, False, '')
 
-plt.figure(figsize=(20,8))
-with autocast(device):
-	for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
-		latents = pipe.scheduler.scale_model_input(latents, t)
-		uncond, cond = pipe.unet(latents, t, encoder_hidden_states=context).sample.chunk(2)
-		with torch.enable_grad():
-			latents = pipe.scheduler.step(uncond + scale * (cond - uncond), t, latents, generator=g).prev_sample
-		
-		opt.zero_grad()
-		# optimize uncond text emb
-		pivot_value = init_trajectory[[i]].to(pipe.device)
-		(latents - pivot_value).mean().backward()
-		opt.step()
-		latents = latents.detach()
-		
-		if i % 10 == 0:
-			plt.subplot(1,6,i//10+1)
-			plt.imshow(show_lat(latents))
+	# default lr works
+	opt = AdamW([context_uncond])
+
+	# concat latents for classifier-free guidance
+	latents = torch.cat([latents, latents])
+	latents.requires_grad_(True)
+	context = torch.cat((context_uncond, context_cond))
+
+	plt.figure(figsize=(20,8))
+	with autocast(device):
+		for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
+			latents = pipe.scheduler.scale_model_input(latents, t)
+			uncond, cond = pipe.unet(latents, t, encoder_hidden_states=context).sample.chunk(2)
+			with torch.enable_grad():
+				latents = pipe.scheduler.step(uncond + scale * (cond - uncond), t, latents, generator=g).prev_sample
+
+			opt.zero_grad()
+			# optimize uncond text emb
+			pivot_value = init_trajectory[[i]].to(pipe.device)
+			(latents - pivot_value).mean().backward()
+			opt.step()
+			latents = latents.detach()
+
+			if i % 10 == 0:
+				plt.subplot(1,6,i//10+1)
+				plt.imsave('backward_process.png', show_lat(pipe, latents))
+
+def backward_process_increase():
+	decoded_latents, timesteps, init_trajectory = create_decoded_latents()
+
+	# we would need to flip trajectory values for pivoting in right direction
+	init_trajectory = init_trajectory.cpu().flip(0)
+	_ = pipe.vae.requires_grad_(False)
+	_ = pipe.text_encoder.requires_grad_(False)
+	_ = pipe.unet.requires_grad_(False)
+
+	latents = decoded_latents.clone()
+
+	# for image editing purposes scale from 1 to 2 works good
+	scale = 1.5
+
+	context_uncond = pipe._encode_prompt('', pipe.device, 1, False, '')
+	# we will be optimizing uncond text embedding
+	context_uncond.requires_grad_(True)
+
+	# use same text
+	prompt = 'a photo of an angry woman'
+	context_cond = pipe._encode_prompt(prompt, pipe.device, 1, False, '')
+
+	# default lr works
+	opt = AdamW([context_uncond])
+
+	# concat latents for classifier-free guidance
+	latents = torch.cat([latents, latents])
+	latents.requires_grad_(True)
+	context = torch.cat((context_uncond, context_cond))
+
+	plt.figure(figsize=(20,8))
+	with autocast(device):
+		for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
+			latents = pipe.scheduler.scale_model_input(latents, t)
+			uncond, cond = pipe.unet(latents, t, encoder_hidden_states=context).sample.chunk(2)
+			with torch.enable_grad():
+				latents = pipe.scheduler.step(uncond + scale * (cond - uncond), t, latents, generator=g).prev_sample
+
+			opt.zero_grad()
+			# optimize uncond text emb
+			pivot_value = init_trajectory[[i]].to(pipe.device)
+			(latents - pivot_value).mean().backward()
+			opt.step()
+			latents = latents.detach()
+
+			if i % 10 == 0:
+				plt.subplot(1,6,i//10+1)
+				plt.imsave('backward_process_increase.png', show_lat(pipe, latents))

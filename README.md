@@ -13,7 +13,7 @@ In the paper new method for Image inversion using Diffusion models are proposed.
 ```
 conda create --name textinv python=3.8 -y
 conda activate textinv
-conda install pytorch torchvision cudatoolkit -c pytorch -c nvidia
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
 
 pip install -r requirements.txt
 ```
