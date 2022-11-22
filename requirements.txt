@@ -6,3 +6,4 @@ Pillow
 transformers
 accelerate
 python-dotenv
+flask
