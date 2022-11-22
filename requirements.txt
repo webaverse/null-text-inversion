@@ -5,3 +5,4 @@ tqdm
 Pillow
 transformers
 accelerate
+python-dotenv
