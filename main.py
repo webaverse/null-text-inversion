@@ -398,13 +398,8 @@ class DDIMScheduler(SchedulerMixin, ConfigMixin):
 	def __len__(self):
 		return self.config.num_train_timesteps
 
-# device = 'cuda'
-# # don't forget to add your token or comment if already logged in
-# pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
-# 											   scheduler=DDIMScheduler(beta_end=0.012,
-# 																	   beta_schedule='scaled_linear',
-# 																	   beta_start=0.00085),
-# 											   use_auth_token=auth_token).to(device)
+device = 'cuda'
+pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', scheduler=DDIMScheduler(beta_end=0.012, beta_schedule='scaled_linear', beta_start=0.00085), use_auth_token=auth_token).to(device)
 
 def show_lat(pipe, latents):
 	# utility function for visualization of diffusion process
@@ -429,53 +424,45 @@ def im2latent(pipe, im, generator):
 	
 	return init_latents * 0.18215
 
-def run_decoded_latents():
-	device = 'cuda'
-	# don't forget to add your token or comment if already logged in
-	pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
-											   scheduler=DDIMScheduler(beta_end=0.012,
-																	   beta_schedule='scaled_linear',
-																	   beta_start=0.00085),
-											   use_auth_token=auth_token).to(device)
+# def run_decoded_latents():
+# 	device = 'cuda'
+# 	# don't forget to add your token or comment if already logged in
+# 	pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
+# 											   scheduler=DDIMScheduler(beta_end=0.012,
+# 																	   beta_schedule='scaled_linear',
+# 																	   beta_start=0.00085),
+# 											   use_auth_token=auth_token).to(device)
 
-	batch_size = 1
-	# photo from ffhq
-	init_image = Image.open('00001.jpg').resize((512,512))
-	# fix seed
-	g = torch.Generator(device=pipe.device).manual_seed(84)
+# 	batch_size = 1
+# 	# photo from ffhq
+# 	init_image = Image.open('00001.jpg').resize((512,512))
+# 	# fix seed
+# 	g = torch.Generator(device=pipe.device).manual_seed(84)
 
-	image_latents = im2latent(pipe, init_image, g)
-	pipe.scheduler.set_timesteps(51)
-	# use text describing an image
-	source_prompt = 'a photo of a woman'
-	context = pipe._encode_prompt(source_prompt, pipe.device, 1, False, '')
+# 	image_latents = im2latent(pipe, init_image, g)
+# 	pipe.scheduler.set_timesteps(51)
+# 	# use text describing an image
+# 	source_prompt = 'a photo of a woman'
+# 	context = pipe._encode_prompt(source_prompt, pipe.device, 1, False, '')
 
-	plt.figure(figsize=(20,8))
-	decoded_latents = image_latents.clone()
-	with autocast('cuda'), inference_mode():
-		# we are pivoting timesteps as we are moving in opposite direction
-		timesteps = pipe.scheduler.timesteps.flip(0)
-		# this would be our targets for pivoting
-		init_trajectory = torch.empty(len(timesteps), *decoded_latents.size()[1:], device=decoded_latents.device, dtype=decoded_latents.dtype)
-		for i, t in enumerate(tqdm(timesteps)):
-			init_trajectory[i:i+1] = decoded_latents
-			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
-			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
-			if i % 10 == 0:
-				plt.subplot(1,6,i//10+1)
-				# plt.imshow(show_lat(decoded_latents))
-				plt.imsave('decoded_latents.png', show_lat(pipe, decoded_latents))
+# 	plt.figure(figsize=(20,8))
+# 	decoded_latents = image_latents.clone()
+# 	with autocast('cuda'), inference_mode():
+# 		# we are pivoting timesteps as we are moving in opposite direction
+# 		timesteps = pipe.scheduler.timesteps.flip(0)
+# 		# this would be our targets for pivoting
+# 		init_trajectory = torch.empty(len(timesteps), *decoded_latents.size()[1:], device=decoded_latents.device, dtype=decoded_latents.dtype)
+# 		for i, t in enumerate(tqdm(timesteps)):
+# 			init_trajectory[i:i+1] = decoded_latents
+# 			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
+# 			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
+# 			if i % 10 == 0:
+# 				plt.subplot(1,6,i//10+1)
+# 				# plt.imshow(show_lat(decoded_latents))
+# 				plt.imsave('decoded_latents.png', show_lat(pipe, decoded_latents))
 
 
 def create_decoded_latents():
-	device = 'cuda'
-	# don't forget to add your token or comment if already logged in
-	pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', 
-											   scheduler=DDIMScheduler(beta_end=0.012,
-																	   beta_schedule='scaled_linear',
-																	   beta_start=0.00085),
-											   use_auth_token=auth_token).to(device)
-
 	batch_size = 1
 	# photo from ffhq
 	init_image = Image.open('00001.jpg').resize((512,512))
@@ -499,21 +486,21 @@ def create_decoded_latents():
 			init_trajectory[i:i+1] = decoded_latents
 			noise_pred = pipe.unet(decoded_latents, t, encoder_hidden_states=context).sample
 			decoded_latents = pipe.scheduler.reverse_step(noise_pred, t, decoded_latents).next_sample
-		
-	return decoded_latents, timesteps, init_trajectory
 
-def run_latents():
-	plt.figure(figsize=(20,8))
-	latents = decoded_latents.clone()
-	with autocast('cuda'), inference_mode():
-		for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
-			latents = pipe.scheduler.step(
-				pipe.unet(latents, t, encoder_hidden_states=context).sample, t, latents
-			).prev_sample
-			if i % 10 == 0:
-				plt.subplot(1,6,i//10+1)
-				# plt.imshow(show_lat(latents))
-				lt.imsave('latents.png', show_lat(pipe, latents))
+	return pipe, decoded_latents, timesteps, init_trajectory
+
+# def run_latents():
+# 	plt.figure(figsize=(20,8))
+# 	latents = decoded_latents.clone()
+# 	with autocast('cuda'), inference_mode():
+# 		for i, t in enumerate(tqdm(pipe.scheduler.timesteps)):
+# 			latents = pipe.scheduler.step(
+# 				pipe.unet(latents, t, encoder_hidden_states=context).sample, t, latents
+# 			).prev_sample
+# 			if i % 10 == 0:
+# 				plt.subplot(1,6,i//10+1)
+# 				# plt.imshow(show_lat(latents))
+# 				lt.imsave('latents.png', show_lat(pipe, latents))
 
 def backward_process():
 	decoded_latents, timesteps, init_trajectory = create_decoded_latents()
@@ -565,7 +552,7 @@ def backward_process():
 				plt.imsave('backward_process.png', show_lat(pipe, latents))
 
 def backward_process_increase():
-	decoded_latents, timesteps, init_trajectory = create_decoded_latents()
+	pipe, decoded_latents, timesteps, init_trajectory = create_decoded_latents()
 
 	# we would need to flip trajectory values for pivoting in right direction
 	init_trajectory = init_trajectory.cpu().flip(0)
